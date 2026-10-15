@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Доступ к документации — LiveCode Interview Platform</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #0f172a; color: #e2e8f0; padding: 24px; }
+  .card { max-width: 560px; width: 100%; background: #1e293b; border: 1px solid #334155;
+          border-radius: 16px; padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+  h1 { margin: 0 0 8px; font-size: 20px; }
+  p.sub { margin: 0 0 20px; color: #94a3b8; font-size: 14px; line-height: 1.55; }
+  label { display: block; font-size: 13px; color: #94a3b8; margin: 0 0 6px; }
+  input[type=password], input[type=text] { width: 100%; padding: 11px 12px; font-size: 14px;
+          border-radius: 10px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; outline: none; }
+  input:focus { border-color: #60a5fa; }
+  button { width: 100%; margin-top: 14px; padding: 12px; font-size: 15px; font-weight: 600;
+           border: 0; border-radius: 10px; background: #2563eb; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .msg { margin-top: 14px; font-size: 13.5px; line-height: 1.5; border-radius: 10px; padding: 12px; display: none; }
+  .err { background: #451a1a; color: #fca5a5; border: 1px solid #7f1d1d; }
+  .ok  { background: #14301f; color: #86efac; border: 1px solid #14532d; }
+  details { margin-top: 18px; font-size: 13px; color: #94a3b8; }
+  summary { cursor: pointer; color: #93c5fd; }
+  ol { padding-left: 18px; line-height: 1.6; }
+  code { background: #0f172a; border: 1px solid #334155; padding: 1px 6px; border-radius: 6px; font-size: 12px; }
+  a { color: #93c5fd; }
+  .foot { margin-top: 20px; font-size: 12px; color: #64748b; text-align: center; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🔒 Приватная документация</h1>
+  <p class="sub">Доступ только для участников проекта. Контент зашифрован (AES-256-GCM); ключ выдаёт GitHub API
+     лишь тем, у кого есть право чтения приватного репозитория <code>jegius/dokaz-doc</code>.
+     На сервере (GitHub Pages) хранится только шифротекст.</p>
+
+  <label for="pat">Personal Access Token (fine-grained)</label>
+  <input id="pat" type="password" placeholder="github_pat_…" autocomplete="off" autofocus>
+  <button id="btn" type="button">Открыть документацию</button>
+  <div id="err" class="msg err"></div>
+  <div id="ok" class="msg ok">Ключ получен, расшифровываем…</div>
+
+  <details>
+    <summary>Как получить токен доступа</summary>
+    <ol>
+      <li>Откройте <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">GitHub → Fine-grained personal access token</a>.</li>
+      <li><b>Repository access:</b> «Only select repositories» → выберите <code>jegius/dokaz-doc</code>.</li>
+      <li><b>Permissions:</b> Repository permissions → <code>Contents</code> → <b>Read-only</b>. Больше ничего не нужно.</li>
+      <li>Создайте токен и вставьте его в поле выше. Токен не сохраняется — в браузере остаётся только ключ расшифровки.</li>
+    </ol>
+    <p style="margin:10px 0 0">Нет доступа к репозиторию? Попросите владельца добавить вас
+       в <b>Settings → Collaborators</b> репозитория <code>jegius/dokaz-doc</code>.</p>
+  </details>
+
+  <p class="foot">LiveCode Interview Platform · внутренняя документация · <a href="#" id="reset">сбросить доступ на этом устройстве</a></p>
+</div>
+<script>
+(function () {
+  var OWNER = 'jegius', REPO = 'dokaz-doc', KEYPATH = '.docs-key', BASE = '/dokaz-doc-site/';
+  var KEY_CACHE = '__dokaz_gate__', KEY_URL = '/__dokaz_key__';
+  var $ = function (id) { return document.getElementById(id); };
+
+  function showErr(text) { var e = $('err'); e.textContent = text; e.style.display = 'block'; $('ok').style.display = 'none'; }
+
+  async function keyCached() {
+    var cache = await caches.open(KEY_CACHE);
+    return Boolean(await cache.match(KEY_URL));
+  }
+
+  async function registerSW() {
+    if (!('serviceWorker' in navigator)) throw new Error('sw');
+    await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+    // ждём, пока воркер возьмёт страницу под контроль (clients.claim), до 3 с
+    for (var i = 0; i < 30 && !navigator.serviceWorker.controller; i++) {
+      await new Promise(function (r) { setTimeout(r, 100); });
+    }
+  }
+
+  async function enterDocs() {
+    await registerSW();
+    // даём воркеру момент подхватить claim, затем уходим на расшифрованный лендинг
+    location.replace(BASE + 'home/');
+  }
+
+  function b64ToBytes(b64) {
+    var bin = atob(b64), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  // Файл ключа содержит hex-строку (64 символа) — декодируем в 32 байта AES-256.
+  function keyFileToRawBytes(text) {
+    var hex = text.trim();
+    if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error('badkey');
+    var out = new Uint8Array(32);
+    for (var i = 0; i < 32; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return out;
+  }
+
+  async function unlock(pat) {
+    var res = await fetch('https://api.github.com/repos/' + OWNER + '/' + REPO + '/contents/' + KEYPATH, {
+      headers: { 'Accept': 'application/vnd.github.raw', 'Authorization': 'Bearer ' + pat }
+    });
+    if (res.status === 401) throw new Error('badtoken');
+    if (res.status === 403 || res.status === 404) throw new Error('noaccess');
+    if (!res.ok) throw new Error('api');
+    var raw = keyFileToRawBytes(await res.text()); // 32 байта ключа
+    var cache = await caches.open(KEY_CACHE);
+    await cache.put(KEY_URL, new Response(raw));
+    if (navigator.serviceWorker.controller) {
+      var bin = '';
+      for (var i = 0; i < raw.length; i++) bin += String.fromCharCode(raw[i]);
+      navigator.serviceWorker.controller.postMessage({ type: 'SET_KEY', b64: btoa(bin) });
+    }
+    $('ok').style.display = 'block';
+    await registerSW();
+    location.replace(BASE + 'home/');
+  }
+
+  $('btn').addEventListener('click', function () {
+    var pat = $('pat').value.trim();
+    if (!pat) { showErr('Вставьте Personal Access Token.'); return; }
+    $('btn').disabled = true;
+    $('err').style.display = 'none';
+    unlock(pat).catch(function (err) {
+      $('btn').disabled = false;
+      if (err.message === 'noaccess') showErr('GitHub ответил 403/404: у токена нет доступа к репозиторию ' + OWNER + '/' + REPO + '. Проверьте, что токен fine-grained создан для этого репозитория с правом Contents: Read, и что вас добавили коллаборатором.');
+      else if (err.message === 'badtoken') showErr('Токен недействителен (401). Создайте новый.');
+      else if (err.message === 'sw') showErr('Браузер не поддерживает Service Worker. Откройте сайт по HTTPS в Chrome/Edge/Firefox/Safari.');
+      else if (err.message === 'badkey') showErr('Файл ключа в репозитории повреждён. Сообщите владельцу.');
+      else showErr('Ошибка GitHub API: ' + err.message + '. Попробуйте позже.');
+    });
+  });
+
+  $('pat').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('btn').click(); });
+
+  $('reset').addEventListener('click', function (e) {
+    e.preventDefault();
+    caches.open(KEY_CACHE).then(function (c) { return c.delete(KEY_URL); }).then(function () {
+      if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'RESET_KEY' });
+      showErr('Доступ сброшен. Введите токен заново.');
+      $('pat').focus();
+    });
+  });
+
+  // Уже разблокировано на этом устройстве — идём сразу в доку
+  keyCached().then(function (has) {
+    if (has) enterDocs().catch(function () {});
+  });
+})();
+</script>
+</body>
+</html>
